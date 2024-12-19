@@ -1,6 +1,7 @@
 #pragma once
 #include "AES.h"
 #include "CTR.h"
+#include "MeshTypes.h"
 #include "concurrency/LockGuard.h"
 #include "configuration.h"
 #include "mesh-pb-constants.h"
@@ -26,7 +27,11 @@ struct CryptoKey {
 class CryptoEngine
 {
   public:
+    using extra_nonce_t = uint32_t;
+
 #if !(MESHTASTIC_EXCLUDE_PKI)
+    static constexpr size_t kTagSizeM = 8; // M value from RFC 3610
+    static constexpr size_t kCurve25519Overhead = kTagSizeM + sizeof(extra_nonce_t);
     uint8_t public_key[32] = {0};
 #endif
 
@@ -39,11 +44,11 @@ class CryptoEngine
 #endif
     void clearKeys();
     void setDHPrivateKey(uint8_t *_private_key);
-    virtual bool encryptCurve25519(uint32_t toNode, uint32_t fromNode, meshtastic_UserLite_public_key_t remotePublic,
-                                   uint64_t packetNum, size_t numBytes, uint8_t *bytes, uint8_t *bytesOut);
-    virtual bool decryptCurve25519(uint32_t fromNode, meshtastic_UserLite_public_key_t remotePublic, uint64_t packetNum,
-                                   size_t numBytes, uint8_t *bytes, uint8_t *bytesOut);
-    virtual bool setDHPublicKey(uint8_t *publicKey);
+    virtual bool encryptCurve25519(NodeNum toNode, NodeNum fromNode, const meshtastic_UserLite_public_key_t remotePublic,
+                                   uint32_t packetId, size_t numBytes, const uint8_t *bytes, uint8_t *bytesOut);
+    virtual bool decryptCurve25519(NodeNum fromNode, const meshtastic_UserLite_public_key_t remotePublic, uint32_t packetId,
+                                   size_t numBytes, const uint8_t *bytes, uint8_t *bytesOut);
+    virtual bool setDHPublicKey(const uint8_t *publicKey);
     virtual void hash(uint8_t *bytes, size_t numBytes);
 
     virtual void aesSetKey(const uint8_t *key, size_t key_len);
@@ -69,29 +74,18 @@ class CryptoEngine
      *
      * @param bytes is updated in place
      */
-    virtual void encryptPacket(uint32_t fromNode, uint64_t packetId, size_t numBytes, uint8_t *bytes);
-    virtual void decrypt(uint32_t fromNode, uint64_t packetId, size_t numBytes, uint8_t *bytes);
+    virtual void encryptPacket(NodeNum fromNode, uint32_t packetId, size_t numBytes, uint8_t *bytes);
+    virtual void decrypt(NodeNum fromNode, uint32_t packetId, size_t numBytes, uint8_t *bytes);
     virtual void encryptAESCtr(CryptoKey key, uint8_t *nonce, size_t numBytes, uint8_t *bytes);
 #ifndef PIO_UNIT_TESTING
   protected:
 #endif
-    /** Our per packet nonce */
-    uint8_t nonce[16] = {0};
     CryptoKey key = {};
     CTRCommon *ctr = NULL;
 #if !(MESHTASTIC_EXCLUDE_PKI)
     uint8_t shared_key[32] = {0};
     uint8_t private_key[32] = {0};
 #endif
-    /**
-     * Init our 128 bit nonce for a new packet
-     *
-     * The NONCE is constructed by concatenating (from MSB to LSB):
-     * a 64 bit packet number (stored in little endian order)
-     * a 32 bit sending node number (stored in little endian order)
-     * a 32 bit block counter (starts at zero)
-     */
-    void initNonce(uint32_t fromNode, uint64_t packetId, uint32_t extraNonce = 0);
 };
 
 extern CryptoEngine *crypto;

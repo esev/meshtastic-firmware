@@ -2,6 +2,8 @@
 #include "CryptoEngine.h"
 #if !MESHTASTIC_EXCLUDE_PKI
 
+constexpr size_t kAESCCMLengthFieldSize = 2; // L value from RFC 3610
+
 int aes_ccm_ae(const uint8_t *key, size_t key_len, const uint8_t *nonce, size_t M, const uint8_t *plain, size_t plain_len,
                const uint8_t *aad, size_t aad_len, uint8_t *crypt, uint8_t *auth);
 

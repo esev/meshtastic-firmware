@@ -1,6 +1,7 @@
 #include "CryptoEngine.h"
 // #include "NodeDB.h"
 #include "architecture.h"
+#include <type_traits>
 
 #if !(MESHTASTIC_EXCLUDE_PKI)
 #include "aes-ccm.h"
@@ -8,6 +9,81 @@
 #include <Crypto.h>
 #include <Curve25519.h>
 #include <SHA256.h>
+#endif
+
+namespace
+{
+/**
+ * Our per packet nonce.
+ *
+ * The same nonce generation logic is used for both Channel (AES-CTR) and PKI (AES-CCM/Curve25519) algorithms.
+ * In both cases, the `set` or `setRandom` methods should be called to populate the nonce values. The individual
+ * `aes_ctr` and `aes_ccm` fields are used to access the nonce byte values for each respective algorithm.
+ *
+ * The NONCE is constructed by concatenating:
+ * a 32 bit packet number (stored in little endian order)
+ * a 32 bit block counter (0 for Channel/AES-CTR encryption)
+ * a 32 bit sending node number (stored in little endian order)
+ */
+static union {
+    struct __attribute__((packed, aligned(4))) {
+        uint32_t packetId;                      // Little endian
+        CryptoEngine::extra_nonce_t extraNonce; // Interpreted as 4 bytes
+        NodeNum fromNode;                       // Little endian
+
+        static_assert(std::is_same<decltype(packetId), decltype(meshtastic_MeshPacket::id)>::value,
+                      "packetId is expected to be the same type as MeshPacket::id");
+        static_assert(std::is_same<decltype(fromNode), decltype(meshtastic_MeshPacket::from)>::value,
+                      "fromNode is expected to be the same type as MeshPacket::from");
+    } values; // Individual fields are populated by the `set` method below.
+
+    /**
+     * Set our nonce for a new packet.
+     *
+     * @param fromNode The MeshPacket `from` field.
+     * @param packetId The MeshPacket `packet_id` field.
+     * @param extraNonce Random 4 byte nonce (default = 0).
+     */
+    inline void set(NodeNum fromNode, uint32_t packetId, CryptoEngine::extra_nonce_t extraNonce = 0)
+    {
+        values.packetId = packetId;
+        values.extraNonce = extraNonce;
+        values.fromNode = fromNode;
+
+        // Set the remaining memory in the nonce, after the `values`, to 0.
+        static uint32_t &remainingNonce = *reinterpret_cast<uint32_t *>(&values + 1);
+        remainingNonce = 0;
+        static_assert(sizeof(values) + sizeof(remainingNonce) == sizeof(*this),
+                      "expected remainingNonce to be the last 4 bytes of the nonce");
+    }
+
+    /**
+     * Set our nonce for a new packet with a randomly generated extraNonce value.
+     *
+     * @param fromNode The MeshPacket `from` field.
+     * @param packetId The MeshPacket `packet_id` field.
+     */
+    inline CryptoEngine::extra_nonce_t setRandom(NodeNum fromNode, uint32_t packetId)
+    {
+        CryptoEngine::extra_nonce_t extraNonce = random();
+        LOG_INFO("Random nonce value: %d", extraNonce);
+        set(fromNode, packetId, extraNonce);
+        return extraNonce;
+        static_assert(sizeof(extraNonce) >= sizeof(decltype(random())),
+                      "sizeof(random()) output is less than sizeof(extra_nonce_t)");
+    }
+
+    uint8_t aes_ctr[16]; // Used by Channel (AES-CTR) to read the nonce value
+    static_assert(sizeof(aes_ctr) >= sizeof(values), "AES-CTR nonce buffer too small for nonce values");
+#if !(MESHTASTIC_EXCLUDE_PKI)
+    const uint8_t aes_ccm[13]; // Used by PKI (AES-CCM/Curve25519) to read the nonce value
+    static_assert(sizeof(aes_ccm) >= sizeof(values), "PKI nonce buffer too small for nonce values");
+    static_assert(sizeof(aes_ccm) + kAESCCMLengthFieldSize == 15, "Nonce size + L must equal 15 per RFC 3610");
+#endif
+} nonce __attribute__((aligned(4))) = {0};
+} // namespace
+
+#if !(MESHTASTIC_EXCLUDE_PKI)
 #if !(MESHTASTIC_EXCLUDE_PKI_KEYGEN)
 
 /**
@@ -58,17 +134,17 @@ void CryptoEngine::clearKeys()
  * Encrypt a packet's payload using a key generated with Curve25519 and SHA256
  * for a specific node.
  *
- * @param bytes is updated in place
+ * @param toNode The MeshPacket `to` field.
+ * @param fromNode The MeshPacket `from` field.
+ * @param remotePublic The remote node's Curve25519 public key.
+ * @param packetId The MeshPacket `packet_id` field.
+ * @param numBytes Number of bytes of plaintext in the bytes buffer.
+ * @param bytes Buffer containing plaintext input.
+ * @param bytesOut Output buffer to be populated with encrypted ciphertext.
  */
-bool CryptoEngine::encryptCurve25519(uint32_t toNode, uint32_t fromNode, meshtastic_UserLite_public_key_t remotePublic,
-                                     uint64_t packetNum, size_t numBytes, uint8_t *bytes, uint8_t *bytesOut)
+bool CryptoEngine::encryptCurve25519(NodeNum toNode, NodeNum fromNode, const meshtastic_UserLite_public_key_t remotePublic,
+                                     uint32_t packetId, size_t numBytes, const uint8_t *bytes, uint8_t *bytesOut)
 {
-    uint8_t *auth;
-    long extraNonceTmp = random();
-    auth = bytesOut + numBytes;
-    memcpy((uint8_t *)(auth + 8), &extraNonceTmp,
-           sizeof(uint32_t)); // do not use dereference on potential non aligned pointers : *extraNonce = extraNonceTmp;
-    LOG_INFO("Random nonce value: %d", extraNonceTmp);
     if (remotePublic.size == 0) {
         LOG_DEBUG("Node %d or their public_key not found", toNode);
         return false;
@@ -76,16 +152,27 @@ bool CryptoEngine::encryptCurve25519(uint32_t toNode, uint32_t fromNode, meshtas
     if (!crypto->setDHPublicKey(remotePublic.bytes)) {
         return false;
     }
-    crypto->hash(shared_key, 32);
-    initNonce(fromNode, packetNum, extraNonceTmp);
 
     // Calculate the shared secret with the destination node and encrypt
-    printBytes("Attempt encrypt with nonce: ", nonce, 13);
+    crypto->hash(shared_key, 32);
+    const extra_nonce_t extraNonce = nonce.setRandom(fromNode, packetId);
+    printBytes("Attempt encrypt with nonce: ", nonce.aes_ccm, sizeof(nonce.aes_ccm));
     printBytes("Attempt encrypt with shared_key starting with: ", shared_key, 8);
-    aes_ccm_ae(shared_key, 32, nonce, 8, bytes, numBytes, nullptr, 0, bytesOut,
-               auth); // this can write up to 15 bytes longer than numbytes past bytesOut
-    memcpy((uint8_t *)(auth + 8), &extraNonceTmp,
-           sizeof(uint32_t)); // do not use dereference on potential non aligned pointers : *extraNonce = extraNonceTmp;
+
+    //                         |<---- kCurve25519Overhead --->|
+    // bytesOut format:
+    // +--- ~ ~ ~ ~ ~ ~ ~ ~ ---+-------------+----------------+
+    // | ciphertext (numBytes) | authTag (8) | extraNonce (4) |
+    // +--- ~ ~ ~ ~ ~ ~ ~ ~ ---+-------------+----------------+
+    //
+    // |<----- Populated by aes_ccm_ae ----->|<--- memcpy --->|
+    uint8_t *authTag = bytesOut + numBytes;
+    if (aes_ccm_ae(shared_key, 32, nonce.aes_ccm, kTagSizeM, bytes, numBytes, nullptr, 0, bytesOut, authTag) != 0)
+        return false;
+
+    // Append the random nonce value after the authTag. Must be done with memcpy as authTag
+    // may not be 4 byte aligned.
+    memcpy((uint8_t *)(authTag + kTagSizeM), &extraNonce, sizeof(extraNonce));
     return true;
 }
 
@@ -93,33 +180,37 @@ bool CryptoEngine::encryptCurve25519(uint32_t toNode, uint32_t fromNode, meshtas
  * Decrypt a packet's payload using a key generated with Curve25519 and SHA256
  * for a specific node.
  *
- * @param bytes is updated in place
+ * @param fromNode The MeshPacket `from` field.
+ * @param remotePublic The remote node's Curve25519 public key.
+ * @param packetId The MeshPacket `packet_id` field.
+ * @param numBytes Number of bytes of ciphertext in the bytes buffer.
+ * @param bytes Buffer containing ciphertext input.
+ * @param bytesOut Output buffer to be populated with decrypted plaintext.
  */
-bool CryptoEngine::decryptCurve25519(uint32_t fromNode, meshtastic_UserLite_public_key_t remotePublic, uint64_t packetNum,
-                                     size_t numBytes, uint8_t *bytes, uint8_t *bytesOut)
+bool CryptoEngine::decryptCurve25519(NodeNum fromNode, const meshtastic_UserLite_public_key_t remotePublic, uint32_t packetId,
+                                     size_t numBytes, const uint8_t *bytes, uint8_t *bytesOut)
 {
-    uint8_t *auth;       // set to last 8 bytes of text?
-    uint32_t extraNonce; // pointer was not really used
-    auth = bytes + numBytes - 12;
-    memcpy(&extraNonce, auth + 8,
-           sizeof(uint32_t)); // do not use dereference on potential non aligned pointers : (uint32_t *)(auth + 8);
-    LOG_INFO("Random nonce value: %d", extraNonce);
-
     if (remotePublic.size == 0) {
         LOG_DEBUG("Node or its public key not found in database");
         return false;
     }
-
     // Calculate the shared secret with the sending node and decrypt
     if (!crypto->setDHPublicKey(remotePublic.bytes)) {
         return false;
     }
     crypto->hash(shared_key, 32);
 
-    initNonce(fromNode, packetNum, extraNonce);
-    printBytes("Attempt decrypt with nonce: ", nonce, 13);
+    numBytes -= kCurve25519Overhead; // Overhead includes authTag(8) + extraNonce(4).
+    const uint8_t *authTag = bytes + numBytes;
+
+    extra_nonce_t extraNonce;
+    memcpy(&extraNonce, authTag + kTagSizeM, sizeof(extraNonce));
+    LOG_INFO("Random nonce value: %d", extraNonce);
+    nonce.set(fromNode, packetId, extraNonce);
+    printBytes("Attempt decrypt with nonce: ", nonce.aes_ccm, sizeof(nonce.aes_ccm));
+
     printBytes("Attempt decrypt with shared_key starting with: ", shared_key, 8);
-    return aes_ccm_ad(shared_key, 32, nonce, 8, bytes, numBytes - 12, nullptr, 0, auth, bytesOut);
+    return aes_ccm_ad(shared_key, 32, nonce.aes_ccm, kTagSizeM, bytes, numBytes, nullptr, 0, authTag, bytesOut);
 }
 
 void CryptoEngine::setDHPrivateKey(uint8_t *_private_key)
@@ -166,7 +257,7 @@ void CryptoEngine::aesEncrypt(uint8_t *in, uint8_t *out)
     aes->encryptBlock(out, in);
 }
 
-bool CryptoEngine::setDHPublicKey(uint8_t *pubKey)
+bool CryptoEngine::setDHPublicKey(const uint8_t *pubKey)
 {
     uint8_t local_priv[32];
     memcpy(shared_key, pubKey, 32);
@@ -194,19 +285,19 @@ void CryptoEngine::setKey(const CryptoKey &k)
  *
  * @param bytes is updated in place
  */
-void CryptoEngine::encryptPacket(uint32_t fromNode, uint64_t packetId, size_t numBytes, uint8_t *bytes)
+void CryptoEngine::encryptPacket(NodeNum fromNode, uint32_t packetId, size_t numBytes, uint8_t *bytes)
 {
     if (key.length > 0) {
-        initNonce(fromNode, packetId);
+        nonce.set(fromNode, packetId);
         if (numBytes <= MAX_BLOCKSIZE) {
-            encryptAESCtr(key, nonce, numBytes, bytes);
+            encryptAESCtr(key, nonce.aes_ctr, numBytes, bytes);
         } else {
             LOG_ERROR("Packet too large for crypto engine: %d. noop encryption!", numBytes);
         }
     }
 }
 
-void CryptoEngine::decrypt(uint32_t fromNode, uint64_t packetId, size_t numBytes, uint8_t *bytes)
+void CryptoEngine::decrypt(NodeNum fromNode, uint32_t packetId, size_t numBytes, uint8_t *bytes)
 {
     // For CTR, the implementation is the same
     encryptPacket(fromNode, packetId, numBytes, bytes);
@@ -232,20 +323,6 @@ void CryptoEngine::encryptAESCtr(CryptoKey _key, uint8_t *_nonce, size_t numByte
     ctr->setIV(_nonce, 16);
     ctr->setCounterSize(4);
     ctr->encrypt(bytes, scratch, numBytes);
-}
-
-/**
- * Init our 128 bit nonce for a new packet
- */
-void CryptoEngine::initNonce(uint32_t fromNode, uint64_t packetId, uint32_t extraNonce)
-{
-    memset(nonce, 0, sizeof(nonce));
-
-    // use memcpy to avoid breaking strict-aliasing
-    memcpy(nonce, &packetId, sizeof(uint64_t));
-    memcpy(nonce + sizeof(uint64_t), &fromNode, sizeof(uint32_t));
-    if (extraNonce)
-        memcpy(nonce + sizeof(uint32_t), &extraNonce, sizeof(uint32_t));
 }
 #ifndef HAS_CUSTOM_CRYPTO_ENGINE
 CryptoEngine *crypto = new CryptoEngine;

@@ -119,7 +119,7 @@ static void aes_ccm_decr_auth(size_t M, uint8_t *a, const uint8_t *auth, uint8_t
 int aes_ccm_ae(const uint8_t *key, size_t key_len, const uint8_t *nonce, size_t M, const uint8_t *plain, size_t plain_len,
                const uint8_t *aad, size_t aad_len, uint8_t *crypt, uint8_t *auth)
 {
-    const size_t L = 2;
+    constexpr size_t L = kAESCCMLengthFieldSize;
     uint8_t x[AES_BLOCK_SIZE], a[AES_BLOCK_SIZE];
     if (aad_len > 30 || M > AES_BLOCK_SIZE)
         return -1;
@@ -136,7 +136,7 @@ int aes_ccm_ae(const uint8_t *key, size_t key_len, const uint8_t *nonce, size_t 
 bool aes_ccm_ad(const uint8_t *key, size_t key_len, const uint8_t *nonce, size_t M, const uint8_t *crypt, size_t crypt_len,
                 const uint8_t *aad, size_t aad_len, const uint8_t *auth, uint8_t *plain)
 {
-    const size_t L = 2;
+    constexpr size_t L = kAESCCMLengthFieldSize;
     uint8_t x[AES_BLOCK_SIZE], a[AES_BLOCK_SIZE];
     uint8_t t[AES_BLOCK_SIZE];
     if (aad_len > 30 || M > AES_BLOCK_SIZE)

@@ -327,21 +327,17 @@ bool perhapsDecode(meshtastic_MeshPacket *p)
     }
     bool decrypted = false;
     ChannelIndex chIndex = 0;
-    memcpy(bytes, p->encrypted.bytes,
-           rawSize); // we have to copy into a scratch buffer, because these bytes are a union with the decoded protobuf
-    memcpy(ScratchEncrypted, p->encrypted.bytes, rawSize);
 #if !(MESHTASTIC_EXCLUDE_PKI)
     // Attempt PKI decryption first
     if (p->channel == 0 && isToUs(p) && p->to > 0 && !isBroadcast(p->to) && nodeDB->getMeshNode(p->from) != nullptr &&
         nodeDB->getMeshNode(p->from)->user.public_key.size > 0 && nodeDB->getMeshNode(p->to)->user.public_key.size > 0 &&
-        rawSize > MESHTASTIC_PKC_OVERHEAD) {
+        rawSize > CryptoEngine::kCurve25519Overhead) {
         LOG_DEBUG("Attempt PKI decryption");
-
-        if (crypto->decryptCurve25519(p->from, nodeDB->getMeshNode(p->from)->user.public_key, p->id, rawSize, ScratchEncrypted,
+        if (crypto->decryptCurve25519(p->from, nodeDB->getMeshNode(p->from)->user.public_key, p->id, rawSize, p->encrypted.bytes,
                                       bytes)) {
             LOG_INFO("PKI Decryption worked!");
             memset(&p->decoded, 0, sizeof(p->decoded));
-            rawSize -= MESHTASTIC_PKC_OVERHEAD;
+            rawSize -= CryptoEngine::kCurve25519Overhead;
             if (pb_decode_from_bytes(bytes, rawSize, &meshtastic_Data_msg, &p->decoded) &&
                 p->decoded.portnum != meshtastic_PortNum_UNKNOWN_APP) {
                 decrypted = true;
@@ -363,6 +359,8 @@ bool perhapsDecode(meshtastic_MeshPacket *p)
 
     // assert(p->which_payloadVariant == MeshPacket_encrypted_tag);
     if (!decrypted) {
+        memcpy(bytes, p->encrypted.bytes,
+               rawSize); // we have to copy into a scratch buffer, because these bytes are a union with the decoded protobuf
         // Try to find a channel that works with this hash
         for (chIndex = 0; chIndex < channels.getNumChannels(); chIndex++) {
             // Try to use this hash/channel pair
@@ -507,7 +505,13 @@ meshtastic_Routing_Error perhapsEncode(meshtastic_MeshPacket *p)
             p->decoded.portnum != meshtastic_PortNum_TRACEROUTE_APP && p->decoded.portnum != meshtastic_PortNum_NODEINFO_APP &&
             p->decoded.portnum != meshtastic_PortNum_ROUTING_APP && p->decoded.portnum != meshtastic_PortNum_POSITION_APP) {
             LOG_DEBUG("Use PKI!");
-            if (numbytes + MESHTASTIC_HEADER_LENGTH + MESHTASTIC_PKC_OVERHEAD > MAX_LORA_PAYLOAD_LEN)
+            constexpr size_t kMaxPkiPlaintextSize =
+                MAX_LORA_PAYLOAD_LEN - (MESHTASTIC_HEADER_LENGTH + CryptoEngine::kCurve25519Overhead);
+            static_assert(kMaxPkiPlaintextSize + CryptoEngine::kCurve25519Overhead <= sizeof(decltype(p->encrypted.bytes)),
+                          "Not enough space in MeshPacket.encrypted to fit max sized PKI packet");
+            static_assert(kMaxPkiPlaintextSize + CryptoEngine::kCurve25519Overhead <= sizeof(ScratchEncrypted),
+                          "Not enough space in ScratchEncrypted to fit max sized PKI packet");
+            if (numbytes > kMaxPkiPlaintextSize)
                 return meshtastic_Routing_Error_TOO_LARGE;
             if (p->pki_encrypted && !memfll(p->public_key.bytes, 0, 32) &&
                 memcmp(p->public_key.bytes, node->user.public_key.bytes, 32) != 0) {
@@ -515,8 +519,10 @@ meshtastic_Routing_Error perhapsEncode(meshtastic_MeshPacket *p)
                          *node->user.public_key.bytes);
                 return meshtastic_Routing_Error_PKI_FAILED;
             }
-            crypto->encryptCurve25519(p->to, getFrom(p), node->user.public_key, p->id, numbytes, bytes, ScratchEncrypted);
-            numbytes += MESHTASTIC_PKC_OVERHEAD;
+            if (!crypto->encryptCurve25519(p->to, getFrom(p), node->user.public_key, p->id, numbytes, bytes, ScratchEncrypted)) {
+                return meshtastic_Routing_Error_PKI_FAILED;
+            }
+            numbytes += CryptoEngine::kCurve25519Overhead;
             memcpy(p->encrypted.bytes, ScratchEncrypted, numbytes);
             p->channel = 0;
             p->pki_encrypted = true;
