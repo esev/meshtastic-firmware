@@ -139,15 +139,21 @@ void BME680Sensor::updateState()
 
 void BME680Sensor::checkStatus(String functionName)
 {
-    if (bme680.status < BSEC_OK)
-        LOG_ERROR("%s BSEC2 code: %s", functionName.c_str(), String(bme680.status).c_str());
-    else if (bme680.status > BSEC_OK)
-        LOG_WARN("%s BSEC2 code: %s", functionName.c_str(), String(bme680.status).c_str());
+    if (bme680.status != BSEC_OK) {
+        const String status = String(bme680.status);
+        if (bme680.status < BSEC_OK)
+            LOG_ERROR("%s BSEC2 code: %s", functionName.c_str(), status.c_str());
+        else if (bme680.status > BSEC_OK)
+            LOG_WARN("%s BSEC2 code: %s", functionName.c_str(), status.c_str());
+    }
 
-    if (bme680.sensor.status < BME68X_OK)
-        LOG_ERROR("%s BME68X code: %s", functionName.c_str(), String(bme680.sensor.status).c_str());
-    else if (bme680.sensor.status > BME68X_OK)
-        LOG_WARN("%s BME68X code: %s", functionName.c_str(), String(bme680.sensor.status).c_str());
+    if (bme680.sensor.status != BME68X_OK) {
+        const String status = String(bme680.sensor.status);
+        if (bme680.sensor.status < BME68X_OK)
+            LOG_ERROR("%s BME68X code: %s", functionName.c_str(), status.c_str());
+        else if (bme680.sensor.status > BME68X_OK)
+            LOG_WARN("%s BME68X code: %s", functionName.c_str(), status.c_str());
+    }
 }
 
 #endif

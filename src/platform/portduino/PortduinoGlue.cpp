@@ -198,9 +198,10 @@ void portduinoSetup()
         std::string filetype = ".yaml";
         for (const std::filesystem::directory_entry &entry :
              std::filesystem::directory_iterator{settingsStrings[config_directory]}) {
-            if (ends_with(entry.path().string(), ".yaml")) {
+            const std::string path = entry.path().string();
+            if (ends_with(path, ".yaml")) {
                 std::cout << "Also using " << entry << " as additional config file" << std::endl;
-                loadConfig(entry.path().c_str());
+                loadConfig(path.c_str());
             }
         }
     }

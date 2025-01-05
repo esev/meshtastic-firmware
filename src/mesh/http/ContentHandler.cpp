@@ -292,18 +292,14 @@ JSONArray htmlListDir(const char *dirname, uint8_t levels)
             JSONObject thisFileMap;
             thisFileMap["size"] = new JSONValue((int)file.size());
 #ifdef ARCH_ESP32
-            thisFileMap["name"] = new JSONValue(String(file.path()).substring(1).c_str());
+            String name = String(file.path()).substring(1);
 #else
-            thisFileMap["name"] = new JSONValue(String(file.name()).substring(1).c_str());
+            String name = String(file.name()).substring(1);
 #endif
-            if (String(file.name()).substring(1).endsWith(".gz")) {
-#ifdef ARCH_ESP32
-                String modifiedFile = String(file.path()).substring(1);
-#else
-                String modifiedFile = String(file.name()).substring(1);
-#endif
-                modifiedFile.remove((modifiedFile.length() - 3), 3);
-                thisFileMap["nameModified"] = new JSONValue(modifiedFile.c_str());
+            thisFileMap["name"] = new JSONValue(name.c_str());
+            if (name.endsWith(".gz")) {
+                name.remove((name.length() - 3), 3);
+                thisFileMap["nameModified"] = new JSONValue(name.c_str());
             }
             fileList.push_back(new JSONValue(thisFileMap));
         }
@@ -337,11 +333,8 @@ void handleFsBrowseStatic(HTTPRequest *req, HTTPResponse *res)
     jsonObjOuter["data"] = new JSONValue(jsonObjInner);
     jsonObjOuter["status"] = new JSONValue("ok");
 
-    JSONValue *value = new JSONValue(jsonObjOuter);
-
-    res->print(value->Stringify().c_str());
-
-    delete value;
+    const std::string body = JSONValue(jsonObjOuter).Stringify();
+    res->print(body.c_str());
 }
 
 void handleFsDeleteStatic(HTTPRequest *req, HTTPResponse *res)
@@ -361,18 +354,16 @@ void handleFsDeleteStatic(HTTPRequest *req, HTTPResponse *res)
             LOG_INFO("%s", pathDelete.c_str());
             JSONObject jsonObjOuter;
             jsonObjOuter["status"] = new JSONValue("ok");
-            JSONValue *value = new JSONValue(jsonObjOuter);
-            res->print(value->Stringify().c_str());
-            delete value;
+            const std::string body = JSONValue(jsonObjOuter).Stringify();
+            res->print(body.c_str());
             return;
         } else {
 
             LOG_INFO("%s", pathDelete.c_str());
             JSONObject jsonObjOuter;
             jsonObjOuter["status"] = new JSONValue("Error");
-            JSONValue *value = new JSONValue(jsonObjOuter);
-            res->print(value->Stringify().c_str());
-            delete value;
+            const std::string body = JSONValue(jsonObjOuter).Stringify();
+            res->print(body.c_str());
             return;
         }
     }
@@ -646,7 +637,8 @@ void handleReport(HTTPRequest *req, HTTPResponse *res)
     // data->wifi
     JSONObject jsonObjWifi;
     jsonObjWifi["rssi"] = new JSONValue(WiFi.RSSI());
-    jsonObjWifi["ip"] = new JSONValue(WiFi.localIP().toString().c_str());
+    const std::string localIp = WiFi.localIP().toString();
+    jsonObjWifi["ip"] = new JSONValue(localIp.c_str());
 
     // data->memory
     JSONObject jsonObjMemory;
@@ -691,9 +683,8 @@ void handleReport(HTTPRequest *req, HTTPResponse *res)
     jsonObjOuter["data"] = new JSONValue(jsonObjInner);
     jsonObjOuter["status"] = new JSONValue("ok");
     // serialize and write it to the stream
-    JSONValue *value = new JSONValue(jsonObjOuter);
-    res->print(value->Stringify().c_str());
-    delete value;
+    const std::string body = JSONValue(jsonObjOuter).Stringify();
+    res->print(body.c_str());
 }
 
 void handleNodes(HTTPRequest *req, HTTPResponse *res)
@@ -762,9 +753,8 @@ void handleNodes(HTTPRequest *req, HTTPResponse *res)
     jsonObjOuter["data"] = new JSONValue(jsonObjInner);
     jsonObjOuter["status"] = new JSONValue("ok");
     // serialize and write it to the stream
-    JSONValue *value = new JSONValue(jsonObjOuter);
-    res->print(value->Stringify().c_str());
-    delete value;
+    const std::string body = JSONValue(jsonObjOuter).Stringify();
+    res->print(body.c_str());
 }
 
 /*
@@ -909,9 +899,8 @@ void handleBlinkLED(HTTPRequest *req, HTTPResponse *res)
 
     JSONObject jsonObjOuter;
     jsonObjOuter["status"] = new JSONValue("ok");
-    JSONValue *value = new JSONValue(jsonObjOuter);
-    res->print(value->Stringify().c_str());
-    delete value;
+    const std::string body = JSONValue(jsonObjOuter).Stringify();
+    res->print(body.c_str());
 }
 
 void handleScanNetworks(HTTPRequest *req, HTTPResponse *res)
@@ -951,8 +940,7 @@ void handleScanNetworks(HTTPRequest *req, HTTPResponse *res)
     jsonObjOuter["status"] = new JSONValue("ok");
 
     // serialize and write it to the stream
-    JSONValue *value = new JSONValue(jsonObjOuter);
-    res->print(value->Stringify().c_str());
-    delete value;
+    const std::string body = JSONValue(jsonObjOuter).Stringify();
+    res->print(body.c_str());
 }
 #endif

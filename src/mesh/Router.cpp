@@ -411,10 +411,12 @@ bool perhapsDecode(meshtastic_MeshPacket *p)
 
         printPacket("decoded message", p);
 #if ENABLE_JSON_LOGGING
-        LOG_TRACE("%s", MeshPacketSerializer::JsonSerialize(p, false).c_str());
+        const std::string jsonDecoded = MeshPacketSerializer::JsonSerialize(p, false);
+        LOG_TRACE("%s", jsonDecoded.c_str());
 #elif ARCH_PORTDUINO
         if (settingsStrings[traceFilename] != "" || settingsMap[logoutputlevel] == level_trace) {
-            LOG_TRACE("%s", MeshPacketSerializer::JsonSerialize(p, false).c_str());
+            const std::string jsonDecoded = MeshPacketSerializer::JsonSerialize(p, false);
+            LOG_TRACE("%s", jsonDecoded.c_str());
         }
 #endif
         return true;
@@ -635,12 +637,16 @@ void Router::perhapsHandleReceived(meshtastic_MeshPacket *p)
 #if ENABLE_JSON_LOGGING
     // Even ignored packets get logged in the trace
     p->rx_time = getValidTime(RTCQualityFromNet); // store the arrival timestamp for the phone
-    LOG_TRACE("%s", MeshPacketSerializer::JsonSerializeEncrypted(p).c_str());
+    {
+        const std::string jsonEncrypted = MeshPacketSerializer::JsonSerializeEncrypted(p);
+        LOG_TRACE("%s", jsonEncrypted.c_str());
+    }
 #elif ARCH_PORTDUINO
     // Even ignored packets get logged in the trace
     if (settingsStrings[traceFilename] != "" || settingsMap[logoutputlevel] == level_trace) {
         p->rx_time = getValidTime(RTCQualityFromNet); // store the arrival timestamp for the phone
-        LOG_TRACE("%s", MeshPacketSerializer::JsonSerializeEncrypted(p).c_str());
+        const std::string jsonEncrypted = MeshPacketSerializer::JsonSerializeEncrypted(p);
+        LOG_TRACE("%s", jsonEncrypted.c_str());
     }
 #endif
     // assert(radioConfig.has_preferences);

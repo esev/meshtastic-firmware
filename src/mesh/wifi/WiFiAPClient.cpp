@@ -73,7 +73,8 @@ static void onNetworkConnected()
             // ESP32 prints obtained IP address in WiFiEvent
 #elif defined(ARCH_RP2040)
             // ARCH_RP2040 does not support HTTPS
-            LOG_INFO("Obtained IP address: %s", WiFi.localIP().toString().c_str());
+            const std::string localIp = WiFi.localIP().toString();
+            LOG_INFO("Obtained IP address: %s", localIp.c_str());
 #endif
         }
 
@@ -311,18 +312,24 @@ static void WiFiEvent(WiFiEvent_t event)
     case ARDUINO_EVENT_WIFI_STA_AUTHMODE_CHANGE:
         LOG_INFO("Authentication mode of access point has changed");
         break;
-    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-        LOG_INFO("Obtained IP address: %s", WiFi.localIP().toString().c_str());
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP: {
+        const std::string localIp = WiFi.localIP().toString();
+        LOG_INFO("Obtained IP address: %s", localIp.c_str());
         onNetworkConnected();
         break;
-    case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
+    }
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP6: {
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
-        LOG_INFO("Obtained Local IP6 address: %s", WiFi.linkLocalIPv6().toString().c_str());
-        LOG_INFO("Obtained GlobalIP6 address: %s", WiFi.globalIPv6().toString().c_str());
+        std::string localIp = WiFi.linkLocalIPv6().toString();
+        LOG_INFO("Obtained Local IP6 address: %s", localIp.c_str());
+        localIp = WiFi.globalIPv6().toString();
+        LOG_INFO("Obtained GlobalIP6 address: %s", localIp.c_str());
 #else
-        LOG_INFO("Obtained IP6 address: %s", WiFi.localIPv6().toString().c_str());
+        const std::string localIp = WiFi.localIPv6().toString();
+        LOG_INFO("Obtained IP6 address: %s", localIp.c_str());
 #endif
         break;
+    }
     case ARDUINO_EVENT_WIFI_STA_LOST_IP:
         LOG_INFO("Lost IP address and IP address is reset to 0");
         if (!isReconnecting) {

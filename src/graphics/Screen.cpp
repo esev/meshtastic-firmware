@@ -949,8 +949,8 @@ static void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state
         }
         // Otherwise, show a time delta
         else {
-            display->drawStringf(xOff + x, 0 + y, tempBuf, "%s ago from %s",
-                                 screen->drawTimeDelta(days, hours, minutes, seconds).c_str(),
+            const std::string delta = screen->drawTimeDelta(days, hours, minutes, seconds);
+            display->drawStringf(xOff + x, 0 + y, tempBuf, "%s ago from %s", delta.c_str(),
                                  (node && node->has_user) ? node->user.short_name : "???");
         }
     }
@@ -2511,7 +2511,8 @@ void DebugInfo::drawFrameWiFi(OLEDDisplay *display, OLEDDisplayUiState *state, i
 
     */
     if (WiFi.status() == WL_CONNECTED) {
-        display->drawString(x, y + FONT_HEIGHT_SMALL * 1, "IP: " + String(WiFi.localIP().toString().c_str()));
+        const std::string localIP = WiFi.localIP().toString();
+        display->drawString(x, y + FONT_HEIGHT_SMALL * 1, "IP: " + String(localIp.c_str()));
     } else if (WiFi.status() == WL_NO_SSID_AVAIL) {
         display->drawString(x, y + FONT_HEIGHT_SMALL * 1, "SSID Not Found");
     } else if (WiFi.status() == WL_CONNECTION_LOST) {
